@@ -4,6 +4,7 @@ use std::cmp::{max, min, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::mem::swap;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, SubAssign};
+use std::vec;
 
 macro_rules! __debug_impl {
     ($x:expr) => {
@@ -2585,5 +2586,187 @@ use procon_reader::*;
 *************************************************************************************/
 
 fn main() {
+    Solver::new().solve();
+}
 
+struct Solver {
+    es0: BTreeMap<usize, (usize, usize, usize)>,
+    g0: Vec<BTreeMap<usize, (usize, usize)>>,    // [(ei, (nv, w)); n]
+    d: usize,
+}
+impl Solver {
+    fn solve(&self) {
+        let n = self.g0.len();
+        let m = self.es0.len();
+        let mut edge_uf = {
+            let mut edge_uf = UnionFind::new(m);
+            let mut g = self.g0.clone();
+            loop {
+                let mut updated = false;
+                for v in 0..n {
+                    if g[v].len() == 2 {
+                        let mut it = g[v].iter();
+                        let (&ei0, &(nv0, w0)) = it.next().unwrap();
+                        let (&ei1, &(nv1, w1)) = it.next().unwrap();
+                        edge_uf.unite(ei0, ei1);
+                        let r = edge_uf.root(ei0);
+                        let w = w0 + w1;
+                        g[v].clear();
+                        g[nv0].remove(&ei0);
+                        g[nv1].remove(&ei1);
+                        g[nv0].insert(r, (nv1, w));
+                        g[nv1].insert(r, (nv0, w));
+                        updated = true;
+                    }
+                }
+                if !updated {
+                    break;
+                }
+            }
+            edge_uf
+        };
+
+        let mut root_to_eis =  {
+            let mut root_to_eis = vec![VecDeque::new(); m];
+            let mut edge_seen = vec![false; m];
+            for v in 0..n {
+                if self.g0[v].len() != 2 {
+                    continue;
+                }
+                let mut it = self.g0[v].iter();
+                let (&ei0, &(nv0, _w0)) = it.next().unwrap();
+                let (&ei1, &(nv1, _w1)) = it.next().unwrap();
+                if edge_seen[ei0] || edge_seen[ei1] {
+                    continue;
+                }
+                let root_ei = edge_uf.root(ei0);
+                debug_assert!(edge_uf.root(ei0) == edge_uf.root(ei1));
+                root_to_eis[root_ei].push_back(ei0);
+                root_to_eis[root_ei].push_front(ei1);
+                edge_seen[ei0] = true;
+                edge_seen[ei1] = true;
+                Self::list_up_grouped_edge(nv0, v, root_ei, &self.g0, &mut edge_uf, &mut root_to_eis[root_ei], &mut edge_seen, true);
+                Self::list_up_grouped_edge(nv1, v, root_ei, &self.g0, &mut edge_uf, &mut root_to_eis[root_ei], &mut edge_seen, false);
+            }
+            for ei in 0..m {
+                if edge_seen[ei] {
+                    continue;
+                }
+                edge_seen[ei] = true;
+                root_to_eis[edge_uf.root(ei)].push_back(ei);
+            }
+            root_to_eis
+        };
+
+        let day_to_roots =  {
+            let mut day_to_roots = vec![BTreeMap::new(); self.d];
+            let mut day = 0;
+            for root_ei in 0..m {
+                if edge_uf.root(root_ei) != root_ei {
+                    continue;
+                }
+                for _ in 0..edge_uf.group_size(root_ei) {
+                    day_to_roots[day].incr(root_ei);
+                    day = (day + 1) % self.d;
+                }
+            }
+            day_to_roots
+        };
+
+        if cfg!(debug_assertions)
+        {
+            let mut lcnt = BTreeMap::new();
+            for mp in day_to_roots.iter() {
+                for (&r, &nm) in mp.iter() {
+                    for _ in 0..nm {
+                        lcnt.incr(r);
+                    }
+                }
+            }
+            for (r, eis_deq) in root_to_eis.iter().enumerate() {
+                if eis_deq.is_empty() {
+                    continue;
+                }
+                debug_assert!(lcnt[&r] == eis_deq.len());
+            }
+        }
+
+        let day_to_eis = {
+            let mut day_to_eis = vec![vec![]; self.d];
+            for (di, today_roots) in day_to_roots.into_iter().enumerate() {
+                for (r, nm) in today_roots {
+                    for _ in 0..nm {
+                        let ei = root_to_eis[r].pop_front().unwrap();
+                        day_to_eis[di].push(ei);
+                    }
+                }
+            }
+            day_to_eis
+        };
+
+        {
+            let mut ei_to_days = vec![None; m];
+            for (di, eis) in day_to_eis.into_iter().enumerate() {
+                for ei in eis {
+                    ei_to_days[ei] = Some(di);
+                }
+            }
+            for ei_to_day in ei_to_days.into_iter() {
+                println!("{}", ei_to_day.unwrap() + 1);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn list_up_grouped_edge(
+        v: usize,
+        pre: usize,
+        tgt_ei_root: usize,
+        g0: &Vec<BTreeMap<usize, (usize, usize)>>,
+        edge_uf: &mut UnionFind,
+        ges: &mut VecDeque<usize>,
+        edge_seen: &mut Vec<bool>,
+        fwd: bool,
+    ) {
+        for (&ei, &(nv, _w)) in g0[v].iter() {
+            if nv == pre {
+                continue;
+            }
+            if edge_uf.root(ei) != tgt_ei_root {
+                continue;
+            }
+            if edge_seen[ei] {
+                continue;
+            }
+            if fwd {
+                ges.push_back(ei);
+            } else {
+                ges.push_front(ei);
+            }
+            edge_seen[ei] = true;
+            Self::list_up_grouped_edge(nv, v, tgt_ei_root, g0, edge_uf, ges, edge_seen, fwd);
+        }
+    }
+    fn new() -> Self {
+        let n = read::<usize>();
+        let m = read::<usize>();
+        let d = read::<usize>();
+        let _k = read::<usize>();
+        let mut g0 = vec![BTreeMap::new(); n];
+        let mut es0 = BTreeMap::new();
+        for ei in 0..m {
+            let a = read::<usize>() - 1;
+            let b = read::<usize>() - 1;
+            //let (a, b) = (min(a, b), max(a, b));
+            let w = read::<usize>();
+            g0[a].insert(ei, (b, w));
+            g0[b].insert(ei, (a, w));
+            es0.insert(ei, (a, b, w));
+        }
+        for _ in 0..n {
+            let _x = read::<usize>();
+            let _y = read::<usize>();
+        }
+        Self{es0, g0, d}
+    }
 }
