@@ -2590,7 +2590,7 @@ fn main() {
 }
 
 struct Solver {
-    es0: BTreeMap<usize, (usize, usize, usize)>,
+    es0: BTreeMap<usize, (usize, usize, usize)>,    // [(ei, (a, b, w))]
     g0: Vec<BTreeMap<usize, (usize, usize)>>,    // [(ei, (nv, w)); n]
     d: usize,
 }
@@ -2598,9 +2598,10 @@ impl Solver {
     fn solve(&self) {
         let n = self.g0.len();
         let m = self.es0.len();
-        let mut edge_uf = {
+        let (mut edge_uf, es) = {
             let mut edge_uf = UnionFind::new(m);
             let mut g = self.g0.clone();
+            let mut es = self.es0.clone();
             loop {
                 let mut updated = false;
                 for v in 0..n {
@@ -2616,6 +2617,9 @@ impl Solver {
                         g[nv1].remove(&ei1);
                         g[nv0].insert(r, (nv1, w));
                         g[nv1].insert(r, (nv0, w));
+                        es.remove(&ei0);
+                        es.remove(&ei1);
+                        es.insert(r, (nv0, nv1, w));
                         updated = true;
                     }
                 }
@@ -2623,7 +2627,15 @@ impl Solver {
                     break;
                 }
             }
-            edge_uf
+            if cfg!(debug_assertions)
+            {
+                for v in 0..n {
+                    for (ei, (nv, _w)) in g[v].iter() {
+                        debug_assert!((*nv == es[ei].0) || (*nv == es[ei].1));
+                    }
+                }
+            }
+            (edge_uf, es)
         };
 
         let mut root_to_eis =  {
@@ -2658,16 +2670,61 @@ impl Solver {
             root_to_eis
         };
 
-        let day_to_roots =  {
-            let mut day_to_roots = vec![BTreeMap::new(); self.d];
-            let mut day = 0;
+        let edge_roots = {
+            let mut edge_roots = vec![];
             for root_ei in 0..m {
                 if edge_uf.root(root_ei) != root_ei {
                     continue;
                 }
-                for _ in 0..edge_uf.group_size(root_ei) {
+                edge_roots.push(root_ei);
+            }
+            edge_roots
+        };
+
+        let day_to_roots =  {
+            let mut day_to_roots = vec![BTreeMap::new(); self.d];
+            let mut day_to_nvs = vec![BTreeSet::new(); self.d];
+            let mut root_remain_cnt = BTreeMap::new();
+            let mut out_rem = (0..n).into_iter().map(|v| self.g0[v].len()).collect::<Vec<_>>();
+            for r in edge_roots.iter().copied() {
+                root_remain_cnt.incr_by(r, edge_uf.group_size(r));
+            }
+            for dcum in 0..m {
+                let day = dcum % self.d;
+                let mut added = false;
+                for (&root_ei, _rem) in root_remain_cnt.iter() {
+                    let (ad_nv0, ad_nv1, _w) = es[&root_ei];
+                    if day_to_nvs[day].contains(&ad_nv0) || day_to_nvs[day].contains(&ad_nv1) {
+                        continue;
+                    }
                     day_to_roots[day].incr(root_ei);
-                    day = (day + 1) % self.d;
+                    day_to_nvs[day].insert(ad_nv0);
+                    day_to_nvs[day].insert(ad_nv1);
+                    out_rem[ad_nv0] -= 1;
+                    out_rem[ad_nv1] -= 1;
+                    root_remain_cnt.decr(&root_ei);
+                    added = true;
+                    break;
+                }
+                if !added {
+                    let mut rem_max = None;
+                    let root_ei = {
+                        let mut rei = 0;
+                        for (&root_ei, _rem) in root_remain_cnt.iter() {
+                            let (ad_nv0, ad_nv1, _w) = es[&root_ei];
+                            if rem_max.chmax(min(out_rem[ad_nv0], out_rem[ad_nv1])) {
+                                rei = root_ei;
+                            }
+                        }
+                        rei
+                    };
+                    let (ad_nv0, ad_nv1, _w) = es[&root_ei];
+                    day_to_roots[day].incr(root_ei);
+                    day_to_nvs[day].insert(ad_nv0);
+                    day_to_nvs[day].insert(ad_nv1);
+                    out_rem[ad_nv0] -= 1;
+                    out_rem[ad_nv1] -= 1;
+                    root_remain_cnt.decr(&root_ei);
                 }
             }
             day_to_roots
