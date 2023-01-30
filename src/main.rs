@@ -2756,6 +2756,25 @@ impl Solver {
             }
             for dcum in 0..m {
                 let day = dcum % self.d;
+                if dcum / self.d == 0 {
+                    let mut rem_max = None;
+                    let mut root_ei = None;
+                    for (&rei, rem) in root_remain_cnt.iter() {
+                        if rem_max.chmax(rem) {
+                            root_ei = Some(rei);
+                        }
+                    }
+                    if let Some(root_ei) = root_ei {
+                        let (ad_nv0, ad_nv1, _w) = es[&root_ei];
+                        day_to_roots[day].incr(root_ei);
+                        day_to_nvs[day].insert(ad_nv0);
+                        day_to_nvs[day].insert(ad_nv1);
+                        out_rem[ad_nv0] -= 1;
+                        out_rem[ad_nv1] -= 1;
+                        root_remain_cnt.decr(&root_ei);
+                        continue;
+                    }
+                }
                 let mut farthest = (None, 0);
                 for (&root_ei, _rem) in root_remain_cnt.iter() {
                     let (ad_nv0, ad_nv1, _w) = es[&root_ei];
