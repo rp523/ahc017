@@ -2596,6 +2596,10 @@ struct Solver {
 }
 impl Solver {
     fn solve(&self) {
+        let ans = self.initialize();
+        Self::output(ans, self.es0.len());
+    }
+    fn initialize(&self) -> Vec<Vec<usize>> {
         let n = self.g0.len();
         let m = self.es0.len();
         let (mut edge_uf, es) = {
@@ -2748,7 +2752,7 @@ impl Solver {
             }
         }
 
-        let day_to_eis = {
+        {
             let mut day_to_eis = vec![vec![]; self.d];
             for (di, today_roots) in day_to_roots.into_iter().enumerate() {
                 for (r, nm) in today_roots {
@@ -2759,18 +2763,17 @@ impl Solver {
                 }
             }
             day_to_eis
-        };
-
-        {
-            let mut ei_to_days = vec![None; m];
-            for (di, eis) in day_to_eis.into_iter().enumerate() {
-                for ei in eis {
-                    ei_to_days[ei] = Some(di);
-                }
+        }
+    }
+    fn output(day_to_eis: Vec<Vec<usize>>, m: usize) {
+        let mut ei_to_days = vec![None; m];
+        for (di, eis) in day_to_eis.into_iter().enumerate() {
+            for ei in eis {
+                ei_to_days[ei] = Some(di);
             }
-            for ei_to_day in ei_to_days.into_iter() {
-                println!("{}", ei_to_day.unwrap() + 1);
-            }
+        }
+        for ei_to_day in ei_to_days.into_iter() {
+            println!("{}", ei_to_day.unwrap() + 1);
         }
     }
 
