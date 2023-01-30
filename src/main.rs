@@ -2597,7 +2597,60 @@ struct Solver {
 impl Solver {
     fn solve(&self) {
         let ans = self.initialize();
+        eprintln!("{}", Self::evaluate(self, &ans));
         Self::output(ans, self.es0.len());
+    }
+    fn evaluate(&self, day_to_eis: &Vec<Vec<usize>>) -> usize {
+        let n = self.g0.len();
+        let m = self.es0.len();
+        let dists0 = Self::dijkstra(&self.g0, m, &[]);
+        let mut score = 0;
+        for blocked_eis in day_to_eis {
+            score += self.evaluate_day(blocked_eis, &dists0) as usize;
+        }
+        score
+    }
+    fn evaluate_day(&self, blocked_eis: &[usize], dists0: &[Vec<usize>]) -> i64 {
+        let n = self.g0.len();
+        let m = self.es0.len();
+        let mut score = 0;
+        let dists = Self::dijkstra(&self.g0, m, blocked_eis);
+        for i in 0..n {
+            for j in 0..n {
+                score += dists[i][j] as i64 - dists0[i][j] as i64;
+            }
+        }
+        score
+    }
+    fn dijkstra(g: &Vec<BTreeMap<usize, (usize, usize)>>, m: usize, blocked_eis: &[usize]) -> Vec<Vec<usize>>{
+        let mut valid_eis = vec![true; m];
+        for blocked_ei in blocked_eis.iter().copied() {
+            valid_eis[blocked_ei] = false;
+        }
+        let mut dists = vec![vec![1e9 as usize; g.len()]; g.len()];
+        for (ini_v, dist) in dists.iter_mut().enumerate() {
+            Self::dijkstra_path1(ini_v, g, &valid_eis, dist);
+        }
+        dists
+    }
+    fn dijkstra_path1(ini_v: usize, g: &[BTreeMap<usize, (usize, usize)>], valid_eis: &[bool], dist: &mut [usize]) {
+        let mut que = BinaryHeap::new();
+        que.push(Reverse((0, ini_v)));
+        dist[ini_v] = 0;
+        while let Some(Reverse((d, v))) = que.pop() {
+            if dist[v] != d {
+                continue;
+            }
+            for (&ei, &(nv, delta)) in g[v].iter() {
+                if !valid_eis[ei] {
+                    continue;
+                }
+                let nd = d + delta;
+                if dist[nv].chmin(nd) {
+                    que.push(Reverse((nd, nv)));
+                }
+            }
+        }
     }
     fn initialize(&self) -> Vec<Vec<usize>> {
         let n = self.g0.len();
@@ -2633,8 +2686,8 @@ impl Solver {
             }
             if cfg!(debug_assertions)
             {
-                for v in 0..n {
-                    for (ei, (nv, _w)) in g[v].iter() {
+                for to in g.iter() {
+                    for (ei, (nv, _w)) in to {
                         debug_assert!((*nv == es[ei].0) || (*nv == es[ei].1));
                     }
                 }
