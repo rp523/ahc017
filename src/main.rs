@@ -2598,27 +2598,31 @@ impl Solver {
     fn solve(&self) {
         let start = std::time::Instant::now();
         let pivot_state = self.initialize();
-        //let mut pivot_score = Self::evaluate(&self, &pivot_state.1);
         //let mut best_state = pivot_state.clone();
         //let mut best_score = pivot_score.clone();
-        Self::output(pivot_state.0, self.es0.len());
-        eprintln!("{}", start.elapsed().as_micros() as f64 / 1_000_000_f64);
+        Self::output(&pivot_state, self.es0.len());
+        if cfg!(debug_assertions) {
+            eprintln!("{}", self.evaluate(&pivot_state));
+            eprintln!("{}", start.elapsed().as_micros() as f64 / 1_000_000_f64);
+        }
     }
-    fn evaluate(&self, day_to_eis: &Vec<Vec<bool>>) -> usize {
-        let n = self.g0.len();
+    fn evaluate(&self, day_x_eis: &Vec<Vec<usize>>) -> usize {
         let m = self.es0.len();
-        let dists0 = Self::dijkstra(&self.g0, m, &vec![true; m]);
+        let dists0 = Self::dijkstra(&self.g0, &vec![true; m]);
         let mut score = 0;
-        for valid_eis in day_to_eis {
-            score += self.evaluate_day(valid_eis, &dists0) as usize;
+        for block_eis in day_x_eis {
+            let mut valid_eis = vec![true; m];
+            for &ei in block_eis {
+                valid_eis[ei] = false;
+            }
+            score += self.evaluate_day(&valid_eis, &dists0) as usize;
         }
         score
     }
     fn evaluate_day(&self, valid_eis: &[bool], dists0: &[Vec<usize>]) -> i64 {
         let n = self.g0.len();
-        let m = self.es0.len();
         let mut score = 0;
-        let dists = Self::dijkstra(&self.g0, m, valid_eis);
+        let dists = Self::dijkstra(&self.g0, valid_eis);
         for i in 0..n {
             for j in 0..n {
                 score += dists[i][j] as i64 - dists0[i][j] as i64;
@@ -2626,10 +2630,10 @@ impl Solver {
         }
         score
     }
-    fn dijkstra(g: &Vec<BTreeMap<usize, (usize, usize)>>, m: usize, valid_eis: &[bool]) -> Vec<Vec<usize>>{
+    fn dijkstra(g: &Vec<BTreeMap<usize, (usize, usize)>>, valid_eis: &[bool]) -> Vec<Vec<usize>>{
         let mut dists = vec![vec![1e9 as usize; g.len()]; g.len()];
         for (ini_v, dist) in dists.iter_mut().enumerate() {
-            Self::dijkstra_path1(ini_v, g, &valid_eis, dist);
+            Self::dijkstra_path1(ini_v, g, valid_eis, dist);
         }
         dists
     }
@@ -2659,7 +2663,7 @@ impl Solver {
         }
         ret
     }
-    fn initialize(&self) -> (Vec<(usize, usize)>, Vec<Vec<bool>>) {
+    fn initialize(&self) -> Vec<Vec<usize>> {
         let n = self.g0.len();
         let m = self.es0.len();
         let (mut edge_uf, es) = {
@@ -2746,7 +2750,7 @@ impl Solver {
         };
 
         let day_to_roots =  {
-            let dists0 = Self::dijkstra(&self.g0, m, &vec![true; m]);
+            let dists0 = Self::dijkstra(&self.g0, &vec![true; m]);
             let mut day_to_roots = vec![BTreeMap::new(); self.d];
             let mut day_to_nvs = vec![BTreeSet::new(); self.d];
             let mut root_remain_cnt = BTreeMap::new();
@@ -2845,25 +2849,25 @@ impl Solver {
             }
         }
 
-        let dayei_vec = {
-            let mut dayei_vec = vec![];
+        {
+            let mut day_x_eis = vec![vec![]; self.d];
             for (di, today_roots) in day_to_roots.into_iter().enumerate() {
                 for (r, nm) in today_roots {
                     for _ in 0..nm {
                         let ei = root_to_eis[r].pop_front().unwrap();
-                        dayei_vec.push((di, ei));
+                        day_x_eis[di].push(ei);
                     }
                 }
             }
-            dayei_vec
-        };
-        let bmap = Self::conv_to_bmap(&dayei_vec, self.d, m);
-        (dayei_vec, bmap)
+            day_x_eis
+        }
     }
-    fn output(day_to_eis: Vec<(usize, usize)>, m: usize) {
+    fn output(day_x_eis: &[Vec<usize>], m: usize) {
         let mut ei_to_days = vec![None; m];
-        for (di, ei) in day_to_eis.into_iter() {
-            ei_to_days[ei] = Some(di);
+        for (di, eis) in day_x_eis.iter().enumerate() {
+            for &ei in eis {
+                ei_to_days[ei] = Some(di);
+            }
         }
         for ei_to_day in ei_to_days.into_iter() {
             println!("{}", ei_to_day.unwrap() + 1);
