@@ -2615,10 +2615,46 @@ impl Solver {
 
         let mut rand = XorShift64::new();
         let dists = Self::dijkstra(&self.g0, &vec![true; m]);
-        let mut bmap = Self::conv_to_bmap(&day_x_eis, self.d, m);
-        let scores = (0..self.d)
+        let es_vec = self.es0.iter().map(|(_ei, &(a, b, w))| (a, b, w)).collect::<Vec<_>>();
+
+        fn calc(eis: &Vec<usize>, es_vec: &[(usize, usize, usize)], dists: &[Vec<usize>]) -> f64 {
+            let mut sm_x = 0f64;
+            let mut sm_xx = 0f64;
+            let mut mn = None;
+            let mut nrm = 0f64;
+            let mut pot = 0f64;
+            for i in 0..eis.len() {
+                for j in 0..eis.len() {
+                    if i == j {
+                        continue;
+                    }
+                    let dist00 = dists[es_vec[eis[i]].0][es_vec[eis[j]].0];
+                    let dist01 = dists[es_vec[eis[i]].0][es_vec[eis[j]].1];
+                    let dist10 = dists[es_vec[eis[i]].1][es_vec[eis[j]].0];
+                    let dist11 = dists[es_vec[eis[i]].1][es_vec[eis[j]].1];
+                    let dist_ee = min(min(dist00, dist01), min(dist10, dist11));
+                    pot += dist00 as f64;
+                    pot += dist01 as f64;
+                    pot += dist10 as f64;
+                    pot += dist11 as f64;
+                    //
+                    sm_x += dist_ee as f64;
+                    sm_xx += (dist_ee * dist_ee) as f64;
+                    mn.chmin(dist_ee as f64);
+                    nrm += 1f64;
+                }
+            }
+            let ave_x = sm_x / nrm;
+            let ave_xx = sm_xx / nrm;
+            let sig = (ave_xx - ave_x * ave_x).sqrt();
+            - pot / nrm
+            //- ave_x / sig
+            //mn.unwrap() / sig
+        }
+
+        let mut scores = (0..self.d)
             .into_iter()
-            .map(|di| Self::evaluate_day(self, &bmap[di], &dists))
+            .map(|di| calc(&day_x_eis[di], &es_vec, &dists))
             .collect::<Vec<_>>();
         
         let mut lc = 0;
@@ -2639,32 +2675,29 @@ impl Solver {
                 }
             }
             {
-                debug_assert!(!bmap[di0][ei0]);
-                bmap[di0][ei0] = true;
-                debug_assert!(!bmap[di1][ei1]);
-                bmap[di1][ei1] = true;
-                debug_assert!(bmap[di0][ei1]);
-                bmap[di0][ei1] = false;
-                debug_assert!(bmap[di1][ei0]);
-                bmap[di1][ei0] = false;
-                let dif0 = Self::evaluate_day(&self, &bmap[di0], &dists) - scores[di0];
-                let dif1 = Self::evaluate_day(&self, &bmap[di1], &dists) - scores[di1];
-                if dif0 + dif1 > 0 {
-                    let del0 = day_x_eis[di0].iter().position(|x| *x == ei0).unwrap();
-                    day_x_eis[di0].remove(del0);
-                    let del1 = day_x_eis[di1].iter().position(|x| *x == ei1).unwrap();
-                    day_x_eis[di1].remove(del1);
-                    day_x_eis[di0].push(ei1);
-                    day_x_eis[di1].push(ei0);
+                let mut new_at_di0 = day_x_eis[di0].clone();
+                let del0 = new_at_di0.iter().position(|x| *x == ei0).unwrap();
+                new_at_di0.remove(del0);
+                let mut new_at_di1 = day_x_eis[di1].clone();
+                let del1 = new_at_di1.iter().position(|x| *x == ei1).unwrap();
+                new_at_di1.remove(del1);
+                new_at_di0.push(ei1);
+                new_at_di1.push(ei0);
+                
+                let new_score0 = calc(&new_at_di0, &es_vec, &dists);
+                let new_score1 = calc(&new_at_di1, &es_vec, &dists);
+                if new_score0 + new_score1 - scores[di0] - scores[di1] > 0f64 {
                 } else {
-                    debug_assert!(!bmap[di0][ei1]);
-                    bmap[di0][ei1] = true;
-                    debug_assert!(!bmap[di1][ei0]);
-                    bmap[di1][ei0] = true;
-                    debug_assert!(bmap[di0][ei0]);
-                    bmap[di0][ei0] = false;
-                    debug_assert!(bmap[di1][ei1]);
-                    bmap[di1][ei1] = true;
+                    day_x_eis[di0].clear();
+                    for x in new_at_di0 {
+                        day_x_eis[di0].push(x);
+                    }
+                    day_x_eis[di1].clear();
+                    for x in new_at_di1 {
+                        day_x_eis[di1].push(x);
+                    }
+                    scores[di0] = new_score0;
+                    scores[di1] = new_score1;
                 }
             }
             lc += 1;
