@@ -2595,13 +2595,112 @@ struct Solver {
 }
 impl Solver {
     fn solve(&self) {
-        let pivot_state = self.initialize_anneal();
+        let pivot_state = self.initialize_anneal2();
         //let mut best_state = pivot_state.clone();
         //let mut best_score = pivot_score.clone();
         Self::output(&pivot_state, self.es0.len());
         if cfg!(debug_assertions) {
             eprintln!("{}", self.evaluate(&pivot_state));
         }
+    }
+    fn initialize_anneal2(&self) -> Vec<Vec<usize>> {
+        let start = std::time::Instant::now();
+        let n = self.g0.len();
+        let m = self.es0.len();
+
+        let mut day_x_eis = vec![vec![]; self.d];
+        for (dcum, (&ei, (_a, _b, _w))) in self.es0.iter().enumerate() {
+            let di = dcum % self.d;
+            day_x_eis[di].push(ei);
+        }
+
+        let mut rand = XorShift64::new();
+        let es_vec = self.es0.iter().map(|(_ei, &(a, b, w))| (a, b, w)).collect::<Vec<_>>();
+        let pass_cnt = Self::dijkstra(&self.g0, &vec![true; m]).1;
+        let mut bmap = Self::conv_to_bmap(&day_x_eis, self.d, m);
+
+        fn calc(is_edge_valid: &Vec<bool>, es_vec: &[(usize, usize, usize)], g: &[BTreeMap<usize, (usize, usize)>], pass_cnt: &[usize]) -> (i64, i64) {
+            let n = g.len();
+            let mut uf = UnionFind::new(n);
+            let mut pass_sum = 0i64;
+            for (ei, &(a, b, w)) in es_vec.iter().enumerate() {
+                if !is_edge_valid[ei] {
+                    pass_sum += pass_cnt[ei] as i64;
+                    continue;
+                }
+                uf.unite(a, b);
+            }
+            let mut sm = 0;
+            let mut sm_sq = 0;
+            for v in 0..n {
+                if uf.root(v) != v {
+                    continue;
+                }
+                let sz = uf.group_size(v);
+                sm += sz;
+                sm_sq += sz * sz;
+            }
+            let isolated_score = - ((sm * sm - sm_sq) as i64);
+            (isolated_score, pass_sum)
+        }
+
+        let mut scores = vec![0i64; self.d];
+        let mut pass_sums = vec![0i64; self.d];
+        for di in 0..self.d {
+            let (s, p) = calc(&bmap[di], &es_vec, &self.g0, &pass_cnt);
+            scores[di] = s;
+            pass_sums[di] = p;
+        }
+        
+        let mut lc = 0;
+        while start.elapsed().as_micros() < 5_500_000 {
+            let di0 = rand.next_usize() % self.d;
+            let di1 = (di0 + 1 + rand.next_usize() % (self.d - 1)) % self.d;
+            let at0 = rand.next_usize() % day_x_eis[di0].len();
+            let at1 = rand.next_usize() % day_x_eis[di1].len();
+
+            debug_assert!(di0 != di1);
+            let ei0 = day_x_eis[di0][at0];
+            let ei1 = day_x_eis[di1][at1];
+            // next state
+            debug_assert!(!bmap[di0][ei0]);
+            debug_assert!(!bmap[di1][ei1]);
+            bmap[di0][ei0] = true;
+            bmap[di1][ei1] = true;
+            debug_assert!(bmap[di0][ei1]);
+            debug_assert!(bmap[di1][ei0]);
+            bmap[di0][ei1] = false;
+            bmap[di1][ei0] = false;
+            let (new_score0, pass_sum0) = calc(&bmap[di0], &es_vec, &self.g0, &pass_cnt);
+            let (new_score1, pass_sum1) = calc(&bmap[di1], &es_vec, &self.g0, &pass_cnt);
+            let mut new_scores = scores.clone();
+            new_scores[di0] = new_score0;
+            new_scores[di1] = new_score1;
+            let mut new_pass_sums = pass_sums.clone();
+            new_pass_sums[di0] = pass_sum0;
+            new_pass_sums[di1] = pass_sum1;
+            let score_sum = scores.iter().sum::<i64>();
+            let new_score_sum = new_scores.iter().sum::<i64>();
+            let pass_diff = *pass_sums.iter().max().unwrap() - *pass_sums.iter().min().unwrap();
+            let new_pass_diff = *new_pass_sums.iter().max().unwrap() - *new_pass_sums.iter().min().unwrap();
+            if (new_score_sum > score_sum) || ((new_score_sum == score_sum) && (new_pass_diff < pass_diff)) {
+                // update
+                day_x_eis[di0][at0] = ei1;
+                day_x_eis[di1][at1] = ei0;
+                scores = new_scores;
+                pass_sums = new_pass_sums;
+            } else {
+                // back to original state
+                bmap[di0][ei0] = false;
+                bmap[di1][ei1] = false;
+                bmap[di0][ei1] = true;
+                bmap[di1][ei0] = true;
+            }
+            lc += 1;
+        }
+        eprintln!("{}", lc);
+
+        day_x_eis
     }
     fn initialize_anneal(&self) -> Vec<Vec<usize>> {
         let start = std::time::Instant::now();
@@ -2614,47 +2713,62 @@ impl Solver {
         }
 
         let mut rand = XorShift64::new();
-        let dists = Self::dijkstra(&self.g0, &vec![true; m]);
+        let dists = Self::dijkstra(&self.g0, &vec![true; m]).0;
         let es_vec = self.es0.iter().map(|(_ei, &(a, b, w))| (a, b, w)).collect::<Vec<_>>();
-
-        fn calc(eis: &Vec<usize>, es_vec: &[(usize, usize, usize)], dists: &[Vec<usize>]) -> f64 {
+        let (mut edge_uf, union_es) = self.unite();
+        let ei_to_root = (0..m).into_iter().map(|x| edge_uf.root(x)).collect::<Vec<_>>();
+        let mut root_to_unionedge = vec![(0, 0, 0); m];
+        for x in 0..m {
+            let rx = edge_uf.root(x);
+            root_to_unionedge[rx] = union_es[&rx];
+        }
+        fn calc(eis: &Vec<usize>, es_vec: &[(usize, usize, usize)], dists: &[Vec<usize>], ei_to_root: &[usize], root_to_unionedge: &[(usize, usize, usize)]) -> f64 {
             let mut sm_x = 0f64;
             let mut sm_xx = 0f64;
-            let mut mn = None;
+            let mut mn: Option<f64> = None;
             let mut nrm = 0f64;
             let mut pot = 0f64;
             for i in 0..eis.len() {
-                for j in 0..eis.len() {
-                    if i == j {
-                        continue;
-                    }
-                    let dist00 = dists[es_vec[eis[i]].0][es_vec[eis[j]].0];
-                    let dist01 = dists[es_vec[eis[i]].0][es_vec[eis[j]].1];
-                    let dist10 = dists[es_vec[eis[i]].1][es_vec[eis[j]].0];
-                    let dist11 = dists[es_vec[eis[i]].1][es_vec[eis[j]].1];
-                    let dist_ee = min(min(dist00, dist01), min(dist10, dist11));
-                    pot += dist00 as f64;
-                    pot += dist01 as f64;
-                    pot += dist10 as f64;
-                    pot += dist11 as f64;
+                for j in (i + 1)..eis.len() {
+                    pot += {
+                        let ri = ei_to_root[eis[i]];
+                        let rj = ei_to_root[eis[j]];
+                        let (nvi0, nvi1, _) = root_to_unionedge[ri];
+                        let (nvj0, nvj1, _) = root_to_unionedge[rj];
+                        let dist00 = dists[nvi0][nvj0];
+                        let dist01 = dists[nvi0][nvj1];
+                        let dist10 = dists[nvi1][nvj0];
+                        let dist11 = dists[nvi1][nvj1];
+                        let dist_ee = min(min(dist00, dist01), min(dist10, dist11));
+                        if dist_ee == 0 {
+                            1e6
+                        } else {
+                            let dist00 = dists[es_vec[eis[i]].0][es_vec[eis[j]].0];
+                            let dist01 = dists[es_vec[eis[i]].0][es_vec[eis[j]].1];
+                            let dist10 = dists[es_vec[eis[i]].1][es_vec[eis[j]].0];
+                            let dist11 = dists[es_vec[eis[i]].1][es_vec[eis[j]].1];
+                            let dist_ee = min(min(dist00, dist01), min(dist10, dist11));
+                            1e3 / (1f64 + (dist_ee * dist_ee) as f64)
+                        }
+                    };
                     //
-                    sm_x += dist_ee as f64;
-                    sm_xx += (dist_ee * dist_ee) as f64;
-                    mn.chmin(dist_ee as f64);
+                    //sm_x += dist_ee as f64;
+                    //sm_xx += (dist_ee * dist_ee) as f64;
+                    //mn.chmin(dist_ee as f64);
                     nrm += 1f64;
                 }
             }
             let ave_x = sm_x / nrm;
             let ave_xx = sm_xx / nrm;
             let sig = (ave_xx - ave_x * ave_x).sqrt();
-            - pot / nrm
+            pot / nrm
             //- ave_x / sig
             //mn.unwrap() / sig
         }
 
         let mut scores = (0..self.d)
             .into_iter()
-            .map(|di| calc(&day_x_eis[di], &es_vec, &dists))
+            .map(|di| calc(&day_x_eis[di], &es_vec, &dists, &ei_to_root, &root_to_unionedge))
             .collect::<Vec<_>>();
         
         let mut lc = 0;
@@ -2684,8 +2798,8 @@ impl Solver {
                 new_at_di0.push(ei1);
                 new_at_di1.push(ei0);
                 
-                let new_score0 = calc(&new_at_di0, &es_vec, &dists);
-                let new_score1 = calc(&new_at_di1, &es_vec, &dists);
+                let new_score0 = calc(&new_at_di0, &es_vec, &dists, &ei_to_root, &root_to_unionedge);
+                let new_score1 = calc(&new_at_di1, &es_vec, &dists, &ei_to_root, &root_to_unionedge);
                 if new_score0 + new_score1 - scores[di0] - scores[di1] > 0f64 {
                 } else {
                     day_x_eis[di0].clear();
@@ -2711,7 +2825,7 @@ impl Solver {
     }
     fn evaluate(&self, day_x_eis: &Vec<Vec<usize>>) -> usize {
         let m = self.es0.len();
-        let dists0 = Self::dijkstra(&self.g0, &vec![true; m]);
+        let dists0 = Self::dijkstra(&self.g0, &vec![true; m]).0;
         let mut score = 0;
         for block_eis in day_x_eis {
             let mut valid_eis = vec![true; m];
@@ -2725,7 +2839,7 @@ impl Solver {
     fn evaluate_day(&self, valid_eis: &[bool], dists0: &[Vec<usize>]) -> i64 {
         let n = self.g0.len();
         let mut score = 0;
-        let dists = Self::dijkstra(&self.g0, valid_eis);
+        let dists = Self::dijkstra(&self.g0, valid_eis).0;
         for i in 0..n {
             for j in 0..n {
                 score += dists[i][j] as i64 - dists0[i][j] as i64;
@@ -2733,22 +2847,25 @@ impl Solver {
         }
         score
     }
-    fn dijkstra(g: &Vec<BTreeMap<usize, (usize, usize)>>, valid_eis: &[bool]) -> Vec<Vec<usize>> {
+    fn dijkstra(g: &Vec<BTreeMap<usize, (usize, usize)>>, valid_eis: &[bool]) -> (Vec<Vec<usize>>, Vec<usize>) {
         let mut dists = vec![vec![1e9 as usize; g.len()]; g.len()];
+        let mut pass_cnt = vec![0; valid_eis.len()];
         for (ini_v, dist) in dists.iter_mut().enumerate() {
-            Self::dijkstra_path1(ini_v, g, valid_eis, dist);
+            Self::dijkstra_path1(ini_v, g, valid_eis, dist, &mut pass_cnt);
         }
-        dists
+        (dists, pass_cnt)
     }
     fn dijkstra_path1(
         ini_v: usize,
         g: &[BTreeMap<usize, (usize, usize)>],
         valid_eis: &[bool],
         dist: &mut [usize],
+        pass_cnt: &mut [usize],
     ) {
         let mut que = BinaryHeap::new();
         que.push(Reverse((0, ini_v)));
         dist[ini_v] = 0;
+        let mut came_by = vec![None; g.len()];
         while let Some(Reverse((d, v))) = que.pop() {
             if dist[v] != d {
                 continue;
@@ -2760,7 +2877,13 @@ impl Solver {
                 let nd = d + delta;
                 if dist[nv].chmin(nd) {
                     que.push(Reverse((nd, nv)));
+                    came_by[nv] = Some(ei);
                 }
+            }
+        }
+        for ei in came_by.into_iter() {
+            if let Some(ei) = ei {
+                pass_cnt[ei] += 1;
             }
         }
     }
@@ -2773,47 +2896,50 @@ impl Solver {
         }
         ret
     }
+    fn unite(&self) -> (UnionFind, BTreeMap<usize, (usize, usize, usize)>) {
+        let n = self.g0.len();
+        let m = self.es0.len();
+        let mut edge_uf = UnionFind::new(m);
+        let mut g = self.g0.clone();
+        let mut es = self.es0.clone();
+        loop {
+            let mut updated = false;
+            for v in 0..n {
+                if g[v].len() == 2 {
+                    let mut it = g[v].iter();
+                    let (&ei0, &(nv0, w0)) = it.next().unwrap();
+                    let (&ei1, &(nv1, w1)) = it.next().unwrap();
+                    edge_uf.unite(ei0, ei1);
+                    let r = edge_uf.root(ei0);
+                    let w = w0 + w1;
+                    g[v].clear();
+                    g[nv0].remove(&ei0);
+                    g[nv1].remove(&ei1);
+                    g[nv0].insert(r, (nv1, w));
+                    g[nv1].insert(r, (nv0, w));
+                    es.remove(&ei0);
+                    es.remove(&ei1);
+                    es.insert(r, (nv0, nv1, w));
+                    updated = true;
+                }
+            }
+            if !updated {
+                break;
+            }
+        }
+        if cfg!(debug_assertions) {
+            for to in g.iter() {
+                for (ei, (nv, _w)) in to {
+                    debug_assert!((*nv == es[ei].0) || (*nv == es[ei].1));
+                }
+            }
+        }
+        (edge_uf, es)
+    }
     fn initialize(&self) -> Vec<Vec<usize>> {
         let n = self.g0.len();
         let m = self.es0.len();
-        let (mut edge_uf, es) = {
-            let mut edge_uf = UnionFind::new(m);
-            let mut g = self.g0.clone();
-            let mut es = self.es0.clone();
-            loop {
-                let mut updated = false;
-                for v in 0..n {
-                    if g[v].len() == 2 {
-                        let mut it = g[v].iter();
-                        let (&ei0, &(nv0, w0)) = it.next().unwrap();
-                        let (&ei1, &(nv1, w1)) = it.next().unwrap();
-                        edge_uf.unite(ei0, ei1);
-                        let r = edge_uf.root(ei0);
-                        let w = w0 + w1;
-                        g[v].clear();
-                        g[nv0].remove(&ei0);
-                        g[nv1].remove(&ei1);
-                        g[nv0].insert(r, (nv1, w));
-                        g[nv1].insert(r, (nv0, w));
-                        es.remove(&ei0);
-                        es.remove(&ei1);
-                        es.insert(r, (nv0, nv1, w));
-                        updated = true;
-                    }
-                }
-                if !updated {
-                    break;
-                }
-            }
-            if cfg!(debug_assertions) {
-                for to in g.iter() {
-                    for (ei, (nv, _w)) in to {
-                        debug_assert!((*nv == es[ei].0) || (*nv == es[ei].1));
-                    }
-                }
-            }
-            (edge_uf, es)
-        };
+        let (mut edge_uf, es) = self.unite();
 
         let mut root_to_eis = {
             let mut root_to_eis = vec![VecDeque::new(); m];
@@ -2877,7 +3003,7 @@ impl Solver {
         };
 
         let day_to_roots = {
-            let dists0 = Self::dijkstra(&self.g0, &vec![true; m]);
+            let dists0 = Self::dijkstra(&self.g0, &vec![true; m]).0;
             let mut day_to_roots = vec![BTreeMap::new(); self.d];
             let mut day_to_nvs = vec![BTreeSet::new(); self.d];
             let mut root_remain_cnt = BTreeMap::new();
