@@ -2645,7 +2645,10 @@ impl Solver {
             let mut sy = 0;
             let mut sx = 0;
             let mut nrm = 0;
+            let mut outer_cnt = vec![0i64; n];
             for &ei in blocked_eis {
+                outer_cnt[es_vec[ei].0] += 1;
+                outer_cnt[es_vec[ei].1] += 1;
                 let node_yx0 = yx[es_vec[ei].0];
                 let node_yx1 = yx[es_vec[ei].1];
                 let edge_y = (node_yx0.0 + node_yx1.0) / 2;
@@ -2657,7 +2660,8 @@ impl Solver {
             let cy = sy / nrm;
             let cx = sx / nrm;
             let center_score = - (cy.abs() + cx.abs());
-            (isolated_score + center_score, pass_sum)
+            let outer_score = outer_cnt.into_iter().map(|x| - (x * x * x * x) as i64).sum::<i64>();
+            (isolated_score * 100000 + center_score * 100000 + outer_score, pass_sum)
         }
 
         let mut scores = vec![0i64; self.d];
