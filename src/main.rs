@@ -2591,6 +2591,7 @@ fn main() {
 struct Solver {
     es0: BTreeMap<usize, (usize, usize, usize)>, // [(ei, (a, b, w))]
     g0: Vec<BTreeMap<usize, (usize, usize)>>,    // [(ei, (nv, w)); n]
+    yx: Vec<(i64, i64)>,
     d: usize,
 }
 impl Solver {
@@ -2605,7 +2606,7 @@ impl Solver {
     }
     fn initialize_anneal2(&self) -> Vec<Vec<usize>> {
         let start = std::time::Instant::now();
-        let n = self.g0.len();
+        let _n = self.g0.len();
         let m = self.es0.len();
 
         let mut day_x_eis = vec![vec![]; self.d];
@@ -2616,14 +2617,14 @@ impl Solver {
 
         let mut rand = XorShift64::new();
         let es_vec = self.es0.iter().map(|(_ei, &(a, b, w))| (a, b, w)).collect::<Vec<_>>();
-        let pass_cnt = Self::dijkstra(&self.g0, &vec![true; m]).1;
+        let (_dists, pass_cnt) = Self::dijkstra(&self.g0, &vec![true; m]);
         let mut bmap = Self::conv_to_bmap(&day_x_eis, self.d, m);
 
-        fn calc(is_edge_valid: &Vec<bool>, es_vec: &[(usize, usize, usize)], g: &[BTreeMap<usize, (usize, usize)>], pass_cnt: &[usize]) -> (i64, i64) {
+        fn calc(blocked_eis: &Vec<usize>, yx: &[(i64, i64)], is_edge_valid: &Vec<bool>, es_vec: &[(usize, usize, usize)], g: &[BTreeMap<usize, (usize, usize)>], pass_cnt: &[usize]) -> (i64, i64) {
             let n = g.len();
             let mut uf = UnionFind::new(n);
             let mut pass_sum = 0i64;
-            for (ei, &(a, b, w)) in es_vec.iter().enumerate() {
+            for (ei, &(a, b, _w)) in es_vec.iter().enumerate() {
                 if !is_edge_valid[ei] {
                     pass_sum += pass_cnt[ei] as i64;
                     continue;
@@ -2641,13 +2642,28 @@ impl Solver {
                 sm_sq += sz * sz;
             }
             let isolated_score = - ((sm * sm - sm_sq) as i64);
-            (isolated_score, pass_sum)
+            let mut sy = 0;
+            let mut sx = 0;
+            let mut nrm = 0;
+            for &ei in blocked_eis {
+                let node_yx0 = yx[es_vec[ei].0];
+                let node_yx1 = yx[es_vec[ei].1];
+                let edge_y = (node_yx0.0 + node_yx1.0) / 2;
+                let edge_x = (node_yx0.1 + node_yx1.1) / 2;
+                sy += edge_y * pass_cnt[ei] as i64;
+                sx += edge_x * pass_cnt[ei] as i64;
+                nrm += pass_cnt[ei] as i64;
+            }
+            let cy = sy / nrm;
+            let cx = sx / nrm;
+            let center_score = - (cy.abs() + cx.abs());
+            (isolated_score + center_score, pass_sum)
         }
 
         let mut scores = vec![0i64; self.d];
         let mut pass_sums = vec![0i64; self.d];
         for di in 0..self.d {
-            let (s, p) = calc(&bmap[di], &es_vec, &self.g0, &pass_cnt);
+            let (s, p) = calc(&day_x_eis[di], &self.yx, &bmap[di], &es_vec, &self.g0, &pass_cnt);
             scores[di] = s;
             pass_sums[di] = p;
         }
@@ -2671,8 +2687,10 @@ impl Solver {
             debug_assert!(bmap[di1][ei0]);
             bmap[di0][ei1] = false;
             bmap[di1][ei0] = false;
-            let (new_score0, pass_sum0) = calc(&bmap[di0], &es_vec, &self.g0, &pass_cnt);
-            let (new_score1, pass_sum1) = calc(&bmap[di1], &es_vec, &self.g0, &pass_cnt);
+            day_x_eis[di0][at0] = ei1;
+            day_x_eis[di1][at1] = ei0;
+            let (new_score0, pass_sum0) = calc(&day_x_eis[di0], &self.yx, &bmap[di0], &es_vec, &self.g0, &pass_cnt);
+            let (new_score1, pass_sum1) = calc(&day_x_eis[di1], &self.yx, &bmap[di1], &es_vec, &self.g0, &pass_cnt);
             let mut new_scores = scores.clone();
             new_scores[di0] = new_score0;
             new_scores[di1] = new_score1;
@@ -2683,14 +2701,19 @@ impl Solver {
             let new_score_sum = new_scores.iter().sum::<i64>();
             let pass_diff = *pass_sums.iter().max().unwrap() - *pass_sums.iter().min().unwrap();
             let new_pass_diff = *new_pass_sums.iter().max().unwrap() - *new_pass_sums.iter().min().unwrap();
-            if (new_score_sum > score_sum) || ((new_score_sum == score_sum) && (new_pass_diff < pass_diff)) {
+            let update = if (new_score_sum > score_sum) || ((new_score_sum == score_sum) && (new_pass_diff < pass_diff)) {
+                true
+            } else {
+                false
+            };
+            if update {
                 // update
-                day_x_eis[di0][at0] = ei1;
-                day_x_eis[di1][at1] = ei0;
                 scores = new_scores;
                 pass_sums = new_pass_sums;
             } else {
                 // back to original state
+                day_x_eis[di0][at0] = ei0;
+                day_x_eis[di1][at1] = ei1;
                 bmap[di0][ei0] = false;
                 bmap[di1][ei1] = false;
                 bmap[di0][ei1] = true;
@@ -2723,9 +2746,9 @@ impl Solver {
             root_to_unionedge[rx] = union_es[&rx];
         }
         fn calc(eis: &Vec<usize>, es_vec: &[(usize, usize, usize)], dists: &[Vec<usize>], ei_to_root: &[usize], root_to_unionedge: &[(usize, usize, usize)]) -> f64 {
-            let mut sm_x = 0f64;
-            let mut sm_xx = 0f64;
-            let mut mn: Option<f64> = None;
+            let mut _sm_x = 0f64;
+            let mut _sm_xx = 0f64;
+            let mut _mn: Option<f64> = None;
             let mut nrm = 0f64;
             let mut pot = 0f64;
             for i in 0..eis.len() {
@@ -2758,9 +2781,6 @@ impl Solver {
                     nrm += 1f64;
                 }
             }
-            let ave_x = sm_x / nrm;
-            let ave_xx = sm_xx / nrm;
-            let sig = (ave_xx - ave_x * ave_x).sqrt();
             pot / nrm
             //- ave_x / sig
             //mn.unwrap() / sig
@@ -3175,10 +3195,7 @@ impl Solver {
             g0[b].insert(ei, (a, w));
             es0.insert(ei, (a, b, w));
         }
-        for _ in 0..n {
-            let _x = read::<usize>();
-            let _y = read::<usize>();
-        }
-        Self { es0, g0, d }
+        let yx = (0..n).into_iter().map(|_| (read::<i64>() - 500, read::<i64>() - 500)).collect::<Vec<_>>();
+        Self { es0, g0, yx, d }
     }
 }
