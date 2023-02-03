@@ -2596,40 +2596,77 @@ struct Solver {
 }
 impl Solver {
     fn solve(&self) {
+        //self.infinite_search();
         let pivot_state = self.initialize_anneal2();
         //let mut best_state = pivot_state.clone();
         //let mut best_score = pivot_score.clone();
         Self::output(&pivot_state, self.es0.len());
         if cfg!(debug_assertions) {
-            eprintln!("{}", self.evaluate(&pivot_state));
+            //eprintln!("{}", self.evaluate(&pivot_state));
+        }
+    }
+    fn infinite_search(&self) {
+        use std::io::Write;
+        let n = self.g0.len();
+        let m = self.es0.len();
+        let mut pivot_state = vec![vec![]; self.d];
+        for i in 0..m {
+            pivot_state[i % self.d].push(i);
+        }
+        let mut best_state = pivot_state.clone();
+        let mut best_score = self.evaluate(&best_state);
+        let mut rand = XorShift64::new();
+        let mut lc = 0;
+        loop {
+            lc += 1;
+            let di0 = rand.next_usize() % self.d;
+            let di1 = rand.next_usize() % self.d;
+            if di0 == di1 {
+                continue;
+            }
+            let at0 = rand.next_usize() % pivot_state[di0].len();
+            let at1 = rand.next_usize() % pivot_state[di1].len();
+            let mut next_state = pivot_state.clone();
+            next_state[di0][at0] = pivot_state[di1][at1];
+            next_state[di1][at1] = pivot_state[di0][at0];
+            let next_score = self.evaluate(&next_state);
+            if best_score.chmin(next_score) {
+                best_state = next_state.clone();
+                pivot_state = next_state.clone();
+                let mut f = std::fs::File::create(std::path::Path::new(&format!("infinity_search/0002_{}_{}.txt", best_score, lc))).unwrap();
+                let mut ans = vec![0; self.es0.len()];
+                for di in 0..self.d {
+                    for ei in best_state[di].iter().copied() {
+                        ans[ei] = di + 1;
+                    }
+                }
+                for ans in ans {
+                    writeln!(f, "{}", ans);
+                }
+            } else if rand.next_f64() < 0.01 {
+                pivot_state = next_state.clone();
+            }
+            eprintln!("{}", lc);
         }
     }
     fn initialize_anneal2(&self) -> Vec<Vec<usize>> {
         let start = std::time::Instant::now();
         let n = self.g0.len();
         let m = self.es0.len();
-
-        let mut day_x_eis = vec![vec![]; self.d];
-        for (dcum, (&ei, (_a, _b, _w))) in self.es0.iter().enumerate() {
-            let di = dcum % self.d;
-            day_x_eis[di].push(ei);
-        }
-
         let mut rand = XorShift64::new();
         let es_vec = self
             .es0
             .iter()
             .map(|(_ei, &(a, b, w))| (a, b, w))
             .collect::<Vec<_>>();
-        let (_dists, pass_cnt) = Self::dijkstra(&self.g0, &vec![true; m]);
-        let mut bmap = Self::conv_to_bmap(&day_x_eis, self.d, m);
-
+        let (dists, pass_cnt) = Self::dijkstra(&self.g0, &vec![true; m]);
         let mut g = vec![vec![]; n];
         for v in 0..n {
             for (&ei, &(nv, w)) in self.g0[v].iter() {
                 g[v].push((ei, nv, w));
             }
         }
+        let g = g;
         let inevitable_bypass_dist = 
         {
             let mut is_edge_valid = vec![true; m];
@@ -2641,6 +2678,23 @@ impl Solver {
             }).collect::<Vec<_>>()
         };
 
+
+
+        
+        
+        let mut day_x_eis = vec![vec![]; self.d];
+        for ei in 0..m {
+            let di = ei % self.d;
+            day_x_eis[di].push(ei);
+        }
+
+
+
+
+
+
+
+        let mut bmap = Self::conv_to_bmap(&day_x_eis, self.d, m);
         let mut scores = vec![0i64; self.d];
         let mut pass_sums = vec![0i64; self.d];
         for di in 0..self.d {
@@ -2769,7 +2823,10 @@ impl Solver {
         let mut sx = 0;
         let mut nrm = 0;
         let mut increase_score = 0;
+        let mut collect_cnt = vec![0i64; n];
         for &ei in blocked_eis {
+            collect_cnt[es_vec[ei].0] += 1;
+            collect_cnt[es_vec[ei].1] += 1;
             let node_yx0 = yx[es_vec[ei].0];
             let node_yx1 = yx[es_vec[ei].1];
             let edge_y = (node_yx0.0 + node_yx1.0) / 2;
@@ -2796,11 +2853,19 @@ impl Solver {
                 }
             }
         }
+        let mut col_score = 0i64;
+        for v in 0..n {
+            if collect_cnt[v] >= 2 {
+                if g[v].len() as i64 > collect_cnt[v] {
+                    col_score += collect_cnt[v];
+                }
+            }
+        }
         let cy = sy / nrm;
         let cx = sx / nrm;
         let center_score = -(cy.abs() + cx.abs());
         (
-            isolated_score * INF_DIST as i64 + increase_score,
+            isolated_score + increase_score + col_score,
             pass_sum,
         )
     }
@@ -3080,7 +3145,7 @@ impl Solver {
             }
             child
         }
-        assert!(dfs(ini_v, n, &spanning_tree, 0, pass_cnt) == n);
+        dfs(ini_v, n, &spanning_tree, 0, pass_cnt);
     }
     fn conv_to_bmap(day_x_eis: &[Vec<usize>], d: usize, m: usize) -> Vec<Vec<bool>> {
         let mut ret = vec![vec![true; m]; d];
