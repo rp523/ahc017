@@ -2587,7 +2587,7 @@ use procon_reader::*;
 fn main() {
     Solver::new().solve();
 }
-
+const INF_DIST: usize = 1e9 as usize;
 struct Solver {
     es0: BTreeMap<usize, (usize, usize, usize)>, // [(ei, (a, b, w))]
     g0: Vec<BTreeMap<usize, (usize, usize)>>,    // [(ei, (nv, w)); n]
@@ -2630,105 +2630,28 @@ impl Solver {
                 g[v].push((ei, nv, w));
             }
         }
-        fn calc(
-            blocked_eis: &Vec<usize>,
-            yx: &[(i64, i64)],
-            is_edge_valid: &Vec<bool>,
-            es_vec: &[(usize, usize, usize)],
-            g: &[Vec<(usize, usize, usize)>],
-            pass_cnt: &[usize],
-        ) -> (i64, i64) {
-            let n = g.len();
-            let m = es_vec.len();
-            let mut uf = UnionFind::new(n);
-            let mut pass_sum = 0i64;
-            for (ei, &(a, b, _w)) in es_vec.iter().enumerate() {
-                if !is_edge_valid[ei] {
-                    pass_sum += pass_cnt[ei] as i64;
-                    continue;
-                }
-                uf.unite(a, b);
-            }
-            let mut sm = 0;
-            let mut sm_sq = 0;
-            for v in 0..n {
-                if uf.root(v) != v {
-                    continue;
-                }
-                let sz = uf.group_size(v);
-                sm += sz;
-                sm_sq += sz * sz;
-            }
-            let isolated_score = -((sm * sm - sm_sq) as i64);
-            let mut sy = 0;
-            let mut sx = 0;
-            let mut nrm = 0;
-            let mut increase_score = 0;
-            for &ei in blocked_eis {
-                let node_yx0 = yx[es_vec[ei].0];
-                let node_yx1 = yx[es_vec[ei].1];
-                let edge_y = (node_yx0.0 + node_yx1.0) / 2;
-                let edge_x = (node_yx0.1 + node_yx1.1) / 2;
-                sy += edge_y * pass_cnt[ei] as i64;
-                sx += edge_x * pass_cnt[ei] as i64;
-                nrm += pass_cnt[ei] as i64;
-
-                {
-                    let v0 = es_vec[ei].0;
-                    let v1 = es_vec[ei].1;
-                    let d1_org = es_vec[ei].2;
-                    let mut que = BinaryHeap::new();
-                    let mut seen: HashMap<usize, usize> = HashMap::new();
-                    que.push(Reverse((0, v0)));
-                    seen.insert(v0, 0);
-                    while let Some(Reverse((d, v))) = que.pop() {
-                        if d != seen[&v] {
-                            continue;
-                        }
-                        for &(v_ei, nv, delta) in g[v].iter() {
-                            if !is_edge_valid[v_ei] {
-                                continue;
-                            }
-                            let nd = d + delta;
-                            if let Some(&d1) = seen.get(&v1) {
-                                if nd >= d1 {
-                                    continue;
-                                }
-                            }
-                            if seen.entry(nv).or_insert(1e9 as usize).chmin(nd) {
-                                que.push(Reverse((nd, nv)));
-                            }
-                        }
-                    }
-                    if let Some(&d1_mod) = seen.get(&v1) {
-                        // finite -> finite
-                        debug_assert!(d1_mod >= d1_org);
-                        increase_score -= (d1_mod - d1_org) as i64;
-                    } else if d1_org != 1e9 as usize {
-                        // finite -> inifinite
-                        increase_score -= (1e9 as usize - d1_org) as i64;
-                    }
-                }
-            }
-            let cy = sy / nrm;
-            let cx = sx / nrm;
-            let center_score = -(cy.abs() + cx.abs());
-            (
-                isolated_score * 1e9 as i64 + increase_score,
-                pass_sum,
-            )
-        }
+        let inevitable_bypass_dist = 
+        {
+            let mut is_edge_valid = vec![true; m];
+            (0..m).into_iter().map(|ei| -> usize {
+                is_edge_valid[ei] = false;
+                let ret = Self::bypass_dist(ei, &is_edge_valid, &g, &es_vec);
+                is_edge_valid[ei] = true;
+                ret
+            }).collect::<Vec<_>>()
+        };
 
         let mut scores = vec![0i64; self.d];
         let mut pass_sums = vec![0i64; self.d];
         for di in 0..self.d {
-            let (s, p) = calc(
+            let (s, p) = Self::calc(
                 &day_x_eis[di],
                 &self.yx,
                 &bmap[di],
                 &es_vec,
                 &g,
                 &pass_cnt,
+                &inevitable_bypass_dist,
             );
             scores[di] = s;
             pass_sums[di] = p;
@@ -2755,21 +2678,23 @@ impl Solver {
             bmap[di1][ei0] = false;
             day_x_eis[di0][at0] = ei1;
             day_x_eis[di1][at1] = ei0;
-            let (new_score0, pass_sum0) = calc(
+            let (new_score0, pass_sum0) = Self::calc(
                 &day_x_eis[di0],
                 &self.yx,
                 &bmap[di0],
                 &es_vec,
                 &g,
                 &pass_cnt,
+                &inevitable_bypass_dist,
             );
-            let (new_score1, pass_sum1) = calc(
+            let (new_score1, pass_sum1) = Self::calc(
                 &day_x_eis[di1],
                 &self.yx,
                 &bmap[di1],
                 &es_vec,
                 &g,
                 &pass_cnt,
+                &inevitable_bypass_dist,
             );
             let mut new_scores = scores.clone();
             new_scores[di0] = new_score0;
@@ -2807,6 +2732,77 @@ impl Solver {
         eprintln!("{}", lc);
 
         day_x_eis
+    }
+
+    fn calc(
+        blocked_eis: &Vec<usize>,
+        yx: &[(i64, i64)],
+        is_edge_valid: &Vec<bool>,
+        es_vec: &[(usize, usize, usize)],
+        g: &[Vec<(usize, usize, usize)>],
+        pass_cnt: &[usize],
+        inevitable_bypass_dist: &[usize],
+    ) -> (i64, i64) {
+        let n = g.len();
+        let m = es_vec.len();
+        let mut uf = UnionFind::new(n);
+        let mut pass_sum = 0i64;
+        for (ei, &(a, b, _w)) in es_vec.iter().enumerate() {
+            if !is_edge_valid[ei] {
+                pass_sum += pass_cnt[ei] as i64;
+                continue;
+            }
+            uf.unite(a, b);
+        }
+        let mut sm = 0;
+        let mut sm_sq = 0;
+        for v in 0..n {
+            if uf.root(v) != v {
+                continue;
+            }
+            let sz = uf.group_size(v);
+            sm += sz;
+            sm_sq += sz * sz;
+        }
+        let isolated_score = -((sm * sm - sm_sq) as i64);
+        let mut sy = 0;
+        let mut sx = 0;
+        let mut nrm = 0;
+        let mut increase_score = 0;
+        for &ei in blocked_eis {
+            let node_yx0 = yx[es_vec[ei].0];
+            let node_yx1 = yx[es_vec[ei].1];
+            let edge_y = (node_yx0.0 + node_yx1.0) / 2;
+            let edge_x = (node_yx0.1 + node_yx1.1) / 2;
+            sy += edge_y * pass_cnt[ei] as i64;
+            sx += edge_x * pass_cnt[ei] as i64;
+            nrm += pass_cnt[ei] as i64;
+
+            {
+                let d1_org = inevitable_bypass_dist[ei];
+                let d1_mod = Self::bypass_dist(
+                    ei,
+                    &is_edge_valid,
+                    &g,
+                    &es_vec
+                );
+                if d1_mod != INF_DIST {
+                    // finite -> finite
+                    debug_assert!(d1_mod >= d1_org);
+                    increase_score -= (d1_mod - d1_org) as i64 * (1 + pass_cnt[ei]) as i64;
+                } else if d1_org != INF_DIST {
+                    // finite -> inifinite
+                    increase_score -= (INF_DIST - d1_org) as i64 * (1 + pass_cnt[ei]) as i64;
+                }
+            }
+        }
+        let cy = sy / nrm;
+        let cx = sx / nrm;
+        let center_score = -(cy.abs() + cx.abs());
+        (
+            isolated_score * INF_DIST as i64 + increase_score,
+            pass_sum,
+        )
     }
     fn initialize_anneal(&self) -> Vec<Vec<usize>> {
         let start = std::time::Instant::now();
@@ -2958,6 +2954,44 @@ impl Solver {
 
         day_x_eis
     }
+    fn bypass_dist(
+        block_ei: usize,
+        is_edge_valid: &[bool],
+        g: &[Vec<(usize, usize, usize)>],   // [(ei, nv, delta); n]
+        es_vec: &[(usize, usize, usize)],    // [(a, b, delta); m]
+    ) -> usize {
+        let v0 = es_vec[block_ei].0;
+        let v1 = es_vec[block_ei].1;
+        let d1_org = es_vec[block_ei].2;
+        let mut que = BinaryHeap::new();
+        let mut seen: HashMap<usize, usize> = HashMap::new();
+        que.push(Reverse((0, v0)));
+        seen.insert(v0, 0);
+        while let Some(Reverse((d, v))) = que.pop() {
+            if d != seen[&v] {
+                continue;
+            }
+            for &(v_ei, nv, delta) in g[v].iter() {
+                if !is_edge_valid[v_ei] {
+                    continue;
+                }
+                let nd = d + delta;
+                if let Some(&d1) = seen.get(&v1) {
+                    if nd >= d1 {
+                        continue;
+                    }
+                }
+                if seen.entry(nv).or_insert(INF_DIST).chmin(nd) {
+                    que.push(Reverse((nd, nv)));
+                }
+            }
+        }
+        if let Some(&dist_v0v1) = seen.get(&v1) {
+            dist_v0v1
+        } else {
+            INF_DIST
+        }
+    }
     fn evaluate(&self, day_x_eis: &Vec<Vec<usize>>) -> usize {
         let m = self.es0.len();
         let dists0 = Self::dijkstra(&self.g0, &vec![true; m]).0;
@@ -2986,7 +3020,7 @@ impl Solver {
         g: &Vec<BTreeMap<usize, (usize, usize)>>,
         valid_eis: &[bool],
     ) -> (Vec<Vec<usize>>, Vec<usize>) {
-        let mut dists = vec![vec![1e9 as usize; g.len()]; g.len()];
+        let mut dists = vec![vec![INF_DIST; g.len()]; g.len()];
         let mut pass_cnt = vec![0; valid_eis.len()];
         for (ini_v, dist) in dists.iter_mut().enumerate() {
             Self::dijkstra_path1(ini_v, g, valid_eis, dist, &mut pass_cnt);
@@ -3179,7 +3213,7 @@ impl Solver {
                     if day_to_nvs[day].contains(&ad_nv0) || day_to_nvs[day].contains(&ad_nv1) {
                         continue;
                     }
-                    let mut far = 1e9 as usize;
+                    let mut far = INF_DIST;
                     for &existing_nv in &day_to_nvs[day] {
                         let d0: usize = dists0[ad_nv0][existing_nv];
                         let d1: usize = dists0[ad_nv1][existing_nv];
