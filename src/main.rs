@@ -2789,10 +2789,10 @@ impl Solver {
                 if d1_mod != INF_DIST {
                     // finite -> finite
                     debug_assert!(d1_mod >= d1_org);
-                    increase_score -= (d1_mod - d1_org) as i64 * (1 + pass_cnt[ei]) as i64;
+                    increase_score -= (d1_mod - d1_org) as i64 * pass_cnt[ei] as i64;
                 } else if d1_org != INF_DIST {
                     // finite -> inifinite
-                    increase_score -= (INF_DIST - d1_org) as i64 * (1 + pass_cnt[ei]) as i64;
+                    increase_score -= (INF_DIST - d1_org) as i64 * pass_cnt[ei] as i64;
                 }
             }
         }
@@ -2962,7 +2962,6 @@ impl Solver {
     ) -> usize {
         let v0 = es_vec[block_ei].0;
         let v1 = es_vec[block_ei].1;
-        let d1_org = es_vec[block_ei].2;
         let mut que = BinaryHeap::new();
         let mut seen: HashMap<usize, usize> = HashMap::new();
         que.push(Reverse((0, v0)));
@@ -3037,7 +3036,8 @@ impl Solver {
         let mut que = BinaryHeap::new();
         que.push(Reverse((0, ini_v)));
         dist[ini_v] = 0;
-        let mut came_by = vec![None; g.len()];
+        let n = g.len();
+        let mut came_from = vec![None; n];
         while let Some(Reverse((d, v))) = que.pop() {
             if dist[v] != d {
                 continue;
@@ -3049,15 +3049,38 @@ impl Solver {
                 let nd = d + delta;
                 if dist[nv].chmin(nd) {
                     que.push(Reverse((nd, nv)));
-                    came_by[nv] = Some(ei);
+                    came_from[nv] = Some((v, ei));
                 }
             }
         }
-        for ei in came_by.into_iter() {
-            if let Some(ei) = ei {
-                pass_cnt[ei] += 1;
+        let mut spanning_tree = vec![vec![]; n];
+        for (v, opv) in came_from.into_iter().enumerate() {
+            if let Some((nv, ei)) = opv {
+                spanning_tree[v].push((ei, nv));
+                spanning_tree[nv].push((ei, v));
             }
         }
+        fn dfs(
+            v: usize,
+            pre: usize,
+            g: &[Vec<(usize, usize)>],
+            now_d: usize,
+            pass_cnt: &mut [usize],
+        ) -> usize {
+            let mut child = 1;
+            for &(ei, nv) in g[v].iter() {
+                if nv == pre {
+                    continue;
+                }
+                let lower_child = dfs(nv, v, g, now_d + 1, pass_cnt);
+                if now_d > 0 {
+                    pass_cnt[ei] += lower_child;
+                }
+                child += lower_child;
+            }
+            child
+        }
+        assert!(dfs(ini_v, n, &spanning_tree, 0, pass_cnt) == n);
     }
     fn conv_to_bmap(day_x_eis: &[Vec<usize>], d: usize, m: usize) -> Vec<Vec<bool>> {
         let mut ret = vec![vec![true; m]; d];
