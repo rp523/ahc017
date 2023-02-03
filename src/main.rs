@@ -2606,7 +2606,7 @@ impl Solver {
     }
     fn initialize_anneal2(&self) -> Vec<Vec<usize>> {
         let start = std::time::Instant::now();
-        let _n = self.g0.len();
+        let n = self.g0.len();
         let m = self.es0.len();
 
         let mut day_x_eis = vec![vec![]; self.d];
@@ -2624,15 +2624,22 @@ impl Solver {
         let (_dists, pass_cnt) = Self::dijkstra(&self.g0, &vec![true; m]);
         let mut bmap = Self::conv_to_bmap(&day_x_eis, self.d, m);
 
+        let mut g = vec![vec![]; n];
+        for v in 0..n {
+            for (&ei, &(nv, w)) in self.g0[v].iter() {
+                g[v].push((ei, nv, w));
+            }
+        }
         fn calc(
             blocked_eis: &Vec<usize>,
             yx: &[(i64, i64)],
             is_edge_valid: &Vec<bool>,
             es_vec: &[(usize, usize, usize)],
-            g: &[BTreeMap<usize, (usize, usize)>],
+            g: &[Vec<(usize, usize, usize)>],
             pass_cnt: &[usize],
         ) -> (i64, i64) {
             let n = g.len();
+            let m = es_vec.len();
             let mut uf = UnionFind::new(n);
             let mut pass_sum = 0i64;
             for (ei, &(a, b, _w)) in es_vec.iter().enumerate() {
@@ -2656,10 +2663,8 @@ impl Solver {
             let mut sy = 0;
             let mut sx = 0;
             let mut nrm = 0;
-            let mut outer_cnt = vec![0i64; n];
+            let mut increase_score = 0;
             for &ei in blocked_eis {
-                outer_cnt[es_vec[ei].0] += 1;
-                outer_cnt[es_vec[ei].1] += 1;
                 let node_yx0 = yx[es_vec[ei].0];
                 let node_yx1 = yx[es_vec[ei].1];
                 let edge_y = (node_yx0.0 + node_yx1.0) / 2;
@@ -2667,16 +2672,49 @@ impl Solver {
                 sy += edge_y * pass_cnt[ei] as i64;
                 sx += edge_x * pass_cnt[ei] as i64;
                 nrm += pass_cnt[ei] as i64;
+
+                {
+                    let v0 = es_vec[ei].0;
+                    let v1 = es_vec[ei].1;
+                    let d1_org = es_vec[ei].2;
+                    let mut que = BinaryHeap::new();
+                    let mut seen: HashMap<usize, usize> = HashMap::new();
+                    que.push(Reverse((0, v0)));
+                    seen.insert(v0, 0);
+                    while let Some(Reverse((d, v))) = que.pop() {
+                        if d != seen[&v] {
+                            continue;
+                        }
+                        for &(v_ei, nv, delta) in g[v].iter() {
+                            if !is_edge_valid[v_ei] {
+                                continue;
+                            }
+                            let nd = d + delta;
+                            if let Some(&d1) = seen.get(&v1) {
+                                if nd >= d1 {
+                                    continue;
+                                }
+                            }
+                            if seen.entry(nv).or_insert(1e9 as usize).chmin(nd) {
+                                que.push(Reverse((nd, nv)));
+                            }
+                        }
+                    }
+                    if let Some(&d1_mod) = seen.get(&v1) {
+                        // finite -> finite
+                        debug_assert!(d1_mod >= d1_org);
+                        increase_score -= (d1_mod - d1_org) as i64;
+                    } else if d1_org != 1e9 as usize {
+                        // finite -> inifinite
+                        increase_score -= (1e9 as usize - d1_org) as i64;
+                    }
+                }
             }
             let cy = sy / nrm;
             let cx = sx / nrm;
             let center_score = -(cy.abs() + cx.abs());
-            let outer_score = outer_cnt
-                .into_iter()
-                .map(|x| -(x * x * x * x) as i64)
-                .sum::<i64>();
             (
-                isolated_score * 100000 + center_score * 100000 + outer_score,
+                isolated_score * 1e9 as i64 + increase_score,
                 pass_sum,
             )
         }
@@ -2689,7 +2727,7 @@ impl Solver {
                 &self.yx,
                 &bmap[di],
                 &es_vec,
-                &self.g0,
+                &g,
                 &pass_cnt,
             );
             scores[di] = s;
@@ -2722,7 +2760,7 @@ impl Solver {
                 &self.yx,
                 &bmap[di0],
                 &es_vec,
-                &self.g0,
+                &g,
                 &pass_cnt,
             );
             let (new_score1, pass_sum1) = calc(
@@ -2730,7 +2768,7 @@ impl Solver {
                 &self.yx,
                 &bmap[di1],
                 &es_vec,
-                &self.g0,
+                &g,
                 &pass_cnt,
             );
             let mut new_scores = scores.clone();
