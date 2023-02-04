@@ -2819,21 +2819,11 @@ impl Solver {
             sm_sq += sz * sz;
         }
         let isolated_score = -((sm * sm - sm_sq) as i64);
-        let mut sy = 0;
-        let mut sx = 0;
-        let mut nrm = 0;
         let mut increase_score = 0;
-        let mut collect_cnt = vec![0i64; n];
+        let mut collect_vec = vec![vec![]; n];
         for &ei in blocked_eis {
-            collect_cnt[es_vec[ei].0] += 1;
-            collect_cnt[es_vec[ei].1] += 1;
-            let node_yx0 = yx[es_vec[ei].0];
-            let node_yx1 = yx[es_vec[ei].1];
-            let edge_y = (node_yx0.0 + node_yx1.0) / 2;
-            let edge_x = (node_yx0.1 + node_yx1.1) / 2;
-            sy += edge_y * pass_cnt[ei] as i64;
-            sx += edge_x * pass_cnt[ei] as i64;
-            nrm += pass_cnt[ei] as i64;
+            collect_vec[es_vec[ei].0].push(pass_cnt[ei] as i64);
+            collect_vec[es_vec[ei].1].push(pass_cnt[ei] as i64);
 
             {
                 let d1_org = inevitable_bypass_dist[ei];
@@ -2855,15 +2845,10 @@ impl Solver {
         }
         let mut col_score = 0i64;
         for v in 0..n {
-            if collect_cnt[v] >= 2 {
-                if g[v].len() as i64 > collect_cnt[v] {
-                    col_score += collect_cnt[v];
-                }
+            if (collect_vec[v].len() >= 2) && (g[v].len() > collect_vec[v].len()) {
+                col_score += collect_vec[v].iter().sum::<i64>();
             }
         }
-        let cy = sy / nrm;
-        let cx = sx / nrm;
-        let center_score = -(cy.abs() + cx.abs());
         (
             isolated_score + increase_score + col_score,
             pass_sum,
