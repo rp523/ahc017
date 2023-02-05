@@ -2662,17 +2662,22 @@ impl Solver {
 
         let mut day_x_eis = vec![vec![]; self.d];
         let mut bmap = vec![vec![true; m]; self.d];
-        for ei in 0..m {
-            let di = ei % self.d;
+
+        use rand::{seq::SliceRandom, SeedableRng}; // 0.6.5
+        use rand_chacha::ChaChaRng; // 0.1.1
+        let mut shuffled_eis = (0..m).collect::<Vec<usize>>();
+        shuffled_eis.shuffle(&mut ChaChaRng::from_seed([0; 32]));
+        for (dcum, ei) in shuffled_eis.into_iter().enumerate() {
+            let di = dcum % self.d;
             day_x_eis[di].push(ei);
             bmap[di][ei] = false;
         }
 
         let mut scores = day_x_eis
-            .iter()
-            .zip(bmap.iter())
-            .map(|(blocked_eis, is_edge_valid)| self.calc_score(blocked_eis, is_edge_valid))
-            .collect::<Vec<_>>();
+        .iter()
+        .zip(bmap.iter())
+        .map(|(blocked_eis, is_edge_valid)| self.calc_score(blocked_eis, is_edge_valid))
+        .collect::<Vec<_>>();
 
         let mut lc = 0;
         let mut uc = 0;
