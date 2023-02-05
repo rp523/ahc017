@@ -2589,10 +2589,11 @@ fn main() {
 }
 const INF_DIST: usize = 1e9 as usize;
 struct Solver {
+    start: std::time::Instant,
     es: Vec<(usize, usize, usize)>,     // [((a, b, w))]
     g: Vec<Vec<(usize, usize, usize)>>, // [((ei, nv, w)); n]
     d: usize,
-    pass_cnt: Vec<usize>,               // [shortest_contribute; m]
+    pass_cnt: Vec<usize>, // [shortest_contribute; m]
     bridge_cnt: Vec<Vec<usize>>,
     inevitable_bypass_dist: Vec<usize>, // [shortest_dist; m]
 }
@@ -2651,7 +2652,6 @@ impl Solver {
         }
     }
     fn hill_climbing(&self) -> Vec<Vec<usize>> {
-        let start = std::time::Instant::now();
         let _n = self.g.len();
         let m = self.es.len();
         let mut rand = XorShift64::new();
@@ -2670,29 +2670,24 @@ impl Solver {
         }
 
         let mut scores = day_x_eis
-        .iter()
-        .zip(bmap.iter())
-        .map(|(blocked_eis, is_edge_valid)| self.calc_score(blocked_eis, is_edge_valid))
-        .collect::<Vec<_>>();
+            .iter()
+            .zip(bmap.iter())
+            .map(|(blocked_eis, is_edge_valid)| self.calc_score(blocked_eis, is_edge_valid))
+            .collect::<Vec<_>>();
 
         let mut lc = 0;
         let mut uc = 0;
-        while start.elapsed().as_micros() < 5_500_000 {
+        while self.start.elapsed().as_millis() < 5_900 {
             let di0 = rand.next_usize() % self.d;
             let di1 = (di0 + 1 + rand.next_usize() % (self.d - 1)) % self.d;
             let at0 = rand.next_usize() % day_x_eis[di0].len();
             let at1 = rand.next_usize() % day_x_eis[di1].len();
 
-            debug_assert!(di0 != di1);
             let ei0 = day_x_eis[di0][at0];
             let ei1 = day_x_eis[di1][at1];
             // next state
-            debug_assert!(!bmap[di0][ei0]);
-            debug_assert!(!bmap[di1][ei1]);
             bmap[di0][ei0] = true;
             bmap[di1][ei1] = true;
-            debug_assert!(bmap[di0][ei1]);
-            debug_assert!(bmap[di1][ei0]);
             bmap[di0][ei1] = false;
             bmap[di1][ei0] = false;
             day_x_eis[di0][at0] = ei1;
@@ -2730,10 +2725,7 @@ impl Solver {
         let collect_score = self.calc_collect_score(blocked_eis);
         isolated_score + increase_score + collect_score
     }
-    fn calc_isolated_score(
-        &self,
-        is_edge_valid: &[bool]
-    ) -> i64 {
+    fn calc_isolated_score(&self, is_edge_valid: &[bool]) -> i64 {
         let n = self.g.len();
         let mut uf = UnionFind::new(n);
         for (ei, &(a, b, _w)) in self.es.iter().enumerate() {
@@ -2752,12 +2744,9 @@ impl Solver {
             sm += sz;
             sm_sq += sz * sz;
         }
-         - (((sm * sm - sm_sq) * INF_DIST) as i64)
+        -(((sm * sm - sm_sq) * INF_DIST) as i64)
     }
-    fn calc_collect_score(
-        &self,
-        blocked_eis: &[usize],
-    ) -> i64 {
+    fn calc_collect_score(&self, blocked_eis: &[usize]) -> i64 {
         let n = self.g.len();
         let mut collect_vec = vec![vec![]; n];
         for &ei in blocked_eis {
@@ -2777,20 +2766,14 @@ impl Solver {
         }
         col_score
     }
-    fn calc_increase_score (
-        &self,
-        blocked_eis: &[usize],
-        is_edge_valid: &[bool],
-    ) -> i64 {
+    fn calc_increase_score(&self, blocked_eis: &[usize], is_edge_valid: &[bool]) -> i64 {
         let mut increase_score = 0;
         for &ei in blocked_eis {
-
             {
                 let d1_org = self.inevitable_bypass_dist[ei];
                 let d1_mod = Self::bypass_dist(ei, is_edge_valid, &self.g, &self.es);
                 if d1_mod != INF_DIST {
                     // finite -> finite
-                    debug_assert!(d1_mod >= d1_org);
                     increase_score -= (d1_mod - d1_org) as i64 * self.pass_cnt[ei] as i64;
                 } else if d1_org != INF_DIST {
                     // finite -> inifinite
@@ -2924,20 +2907,26 @@ impl Solver {
                 if nv == pre_v {
                     continue;
                 }
-                debug_assert!(pre_ei != ei);
                 let lower_child = dfs(nv, v, ei, g, now_d + 1, pass_cnt, bridge_cnt);
                 if now_d > 0 {
                     pass_cnt[ei] += lower_child;
                 }
                 if now_d > 1 {
-                    debug_assert!(pre_ei != pass_cnt.len());
                     bridge_cnt[pre_ei][ei] += lower_child;
                 }
                 child += lower_child;
             }
             child
         }
-        dfs(ini_v, n, pass_cnt.len(), &spanning_tree, 0, pass_cnt, bridge_cnt);
+        dfs(
+            ini_v,
+            n,
+            pass_cnt.len(),
+            &spanning_tree,
+            0,
+            pass_cnt,
+            bridge_cnt,
+        );
     }
     fn output(day_x_eis: Vec<Vec<usize>>, m: usize) {
         let mut ei_to_days = vec![None; m];
@@ -2951,6 +2940,7 @@ impl Solver {
         }
     }
     fn new() -> Self {
+        let start = std::time::Instant::now();
         let n = read::<usize>();
         let m = read::<usize>();
         let d = read::<usize>();
@@ -2986,6 +2976,7 @@ impl Solver {
                 .collect::<Vec<_>>()
         };
         Self {
+            start,
             es,
             g,
             d,
