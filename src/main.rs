@@ -2599,8 +2599,8 @@ struct Solver {
 impl Solver {
     fn solve(&self) {
         //self.infinite_search();
-        let pivot_state = self.hill_climbing();
-        Self::output(&pivot_state, self.es.len());
+        let ans = self.hill_climbing();
+        Self::output(ans, self.es.len());
     }
     fn infinite_search(&self) {
         use std::io::Write;
@@ -2939,10 +2939,10 @@ impl Solver {
         }
         dfs(ini_v, n, pass_cnt.len(), &spanning_tree, 0, pass_cnt, bridge_cnt);
     }
-    fn output(day_x_eis: &[Vec<usize>], m: usize) {
+    fn output(day_x_eis: Vec<Vec<usize>>, m: usize) {
         let mut ei_to_days = vec![None; m];
-        for (di, eis) in day_x_eis.iter().enumerate() {
-            for &ei in eis {
+        for (di, eis) in day_x_eis.into_iter().enumerate() {
+            for ei in eis {
                 ei_to_days[ei] = Some(di);
             }
         }
