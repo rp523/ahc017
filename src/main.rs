@@ -2661,12 +2661,13 @@ impl Solver {
         let mut rand = XorShift64::new();
 
         let mut day_x_eis = vec![vec![]; self.d];
+        let mut bmap = vec![vec![true; m]; self.d];
         for ei in 0..m {
             let di = ei % self.d;
             day_x_eis[di].push(ei);
+            bmap[di][ei] = false;
         }
 
-        let mut bmap = Self::conv_to_bmap(&day_x_eis, self.d, m);
         let mut scores = day_x_eis
             .iter()
             .zip(bmap.iter())
@@ -2922,15 +2923,6 @@ impl Solver {
             child
         }
         dfs(ini_v, n, &spanning_tree, 0, pass_cnt);
-    }
-    fn conv_to_bmap(day_x_eis: &[Vec<usize>], d: usize, m: usize) -> Vec<Vec<bool>> {
-        let mut ret = vec![vec![true; m]; d];
-        for (di, eis) in day_x_eis.iter().enumerate() {
-            for &ei in eis {
-                ret[di][ei] = false;
-            }
-        }
-        ret
     }
     fn output(day_x_eis: &[Vec<usize>], m: usize) {
         let mut ei_to_days = vec![None; m];
