@@ -2593,18 +2593,14 @@ struct Solver {
     g: Vec<Vec<(usize, usize, usize)>>, // [((ei, nv, w)); n]
     d: usize,
     pass_cnt: Vec<usize>,               // [shortest_contribute; m]
+    bridge_cnt: Vec<Vec<usize>>,
     inevitable_bypass_dist: Vec<usize>, // [shortest_dist; m]
 }
 impl Solver {
     fn solve(&self) {
         //self.infinite_search();
-        let pivot_state = self.initialize_anneal2();
-        //let mut best_state = pivot_state.clone();
-        //let mut best_score = pivot_score.clone();
+        let pivot_state = self.hill_climbing();
         Self::output(&pivot_state, self.es.len());
-        if cfg!(debug_assertions) {
-            //eprintln!("{}", self.evaluate(&pivot_state));
-        }
     }
     fn infinite_search(&self) {
         use std::io::Write;
@@ -2654,7 +2650,7 @@ impl Solver {
             eprintln!("{}", lc);
         }
     }
-    fn initialize_anneal2(&self) -> Vec<Vec<usize>> {
+    fn hill_climbing(&self) -> Vec<Vec<usize>> {
         let start = std::time::Instant::now();
         let _n = self.g.len();
         let m = self.es.len();
@@ -2763,17 +2759,20 @@ impl Solver {
         blocked_eis: &[usize],
     ) -> i64 {
         let n = self.g.len();
-        let mut collect_vec = vec![(0, 0); n];
+        let mut collect_vec = vec![vec![]; n];
         for &ei in blocked_eis {
-            collect_vec[self.es[ei].0].0 += self.pass_cnt[ei] as i64;
-            collect_vec[self.es[ei].0].1 += 1usize; //pass_cnt[ei] as i64;
-            collect_vec[self.es[ei].1].0 += self.pass_cnt[ei] as i64;
-            collect_vec[self.es[ei].1].1 += 1usize; //pass_cnt[ei] as i64;
+            collect_vec[self.es[ei].0].push(ei);
+            collect_vec[self.es[ei].1].push(ei);
         }
         let mut col_score = 0i64;
         for (col, to) in collect_vec.iter().zip(self.g.iter()) {
-            if (col.1 >= 2) && (to.len() > col.1) {
-                col_score += col.0; //.iter().sum::<i64>();
+            if (col.len() >= 2) && (to.len() > col.len()) {
+                //col_score += col.iter().map(|&ei| self.pass_cnt[ei]).sum::<usize>() as i64;
+                for j in 0..col.len() {
+                    for i in 0..j {
+                        col_score += self.bridge_cnt[col[i]][col[j]] as i64;
+                    }
+                }
             }
         }
         col_score
@@ -2865,13 +2864,16 @@ impl Solver {
     fn dijkstra(
         g: &[Vec<(usize, usize, usize)>],
         valid_eis: &[bool],
-    ) -> (Vec<Vec<usize>>, Vec<usize>) {
-        let mut dists = vec![vec![INF_DIST; g.len()]; g.len()];
-        let mut pass_cnt = vec![0; valid_eis.len()];
+    ) -> (Vec<Vec<usize>>, Vec<usize>, Vec<Vec<usize>>) {
+        let n = g.len();
+        let m = valid_eis.len();
+        let mut dists = vec![vec![INF_DIST; n]; n];
+        let mut pass_cnt = vec![0; m];
+        let mut bridge_cnt = vec![vec![0; m]; m];
         for (ini_v, dist) in dists.iter_mut().enumerate() {
-            Self::dijkstra_path1(ini_v, g, valid_eis, dist, &mut pass_cnt);
+            Self::dijkstra_path1(ini_v, g, valid_eis, dist, &mut pass_cnt, &mut bridge_cnt);
         }
-        (dists, pass_cnt)
+        (dists, pass_cnt, bridge_cnt)
     }
     fn dijkstra_path1(
         ini_v: usize,
@@ -2879,6 +2881,7 @@ impl Solver {
         valid_eis: &[bool],
         dist: &mut [usize],
         pass_cnt: &mut [usize],
+        bridge_cnt: &mut [Vec<usize>],
     ) {
         let mut que = BinaryHeap::new();
         que.push(Reverse((0, ini_v)));
@@ -2909,25 +2912,32 @@ impl Solver {
         }
         fn dfs(
             v: usize,
-            pre: usize,
+            pre_v: usize,
+            pre_ei: usize,
             g: &[Vec<(usize, usize)>],
             now_d: usize,
             pass_cnt: &mut [usize],
+            bridge_cnt: &mut [Vec<usize>],
         ) -> usize {
             let mut child = 1;
             for &(ei, nv) in g[v].iter() {
-                if nv == pre {
+                if nv == pre_v {
                     continue;
                 }
-                let lower_child = dfs(nv, v, g, now_d + 1, pass_cnt);
+                debug_assert!(pre_ei != ei);
+                let lower_child = dfs(nv, v, ei, g, now_d + 1, pass_cnt, bridge_cnt);
                 if now_d > 0 {
                     pass_cnt[ei] += lower_child;
+                }
+                if now_d > 1 {
+                    debug_assert!(pre_ei != pass_cnt.len());
+                    bridge_cnt[pre_ei][ei] += lower_child;
                 }
                 child += lower_child;
             }
             child
         }
-        dfs(ini_v, n, &spanning_tree, 0, pass_cnt);
+        dfs(ini_v, n, pass_cnt.len(), &spanning_tree, 0, pass_cnt, bridge_cnt);
     }
     fn output(day_x_eis: &[Vec<usize>], m: usize) {
         let mut ei_to_days = vec![None; m];
@@ -2962,7 +2972,7 @@ impl Solver {
             .into_iter()
             .map(|_| (read::<i64>() - 500, read::<i64>() - 500))
             .collect::<Vec<_>>();
-        let (_dists, pass_cnt) = Self::dijkstra(&g, &vec![true; m]);
+        let (_dists, pass_cnt, bridge_cnt) = Self::dijkstra(&g, &vec![true; m]);
         let inevitable_bypass_dist = {
             let mut is_edge_valid = vec![true; m];
             (0..m)
@@ -2980,6 +2990,7 @@ impl Solver {
             g,
             d,
             pass_cnt,
+            bridge_cnt,
             inevitable_bypass_dist,
         }
     }
